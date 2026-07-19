@@ -105,8 +105,8 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
     ret.accFaulted = cp.vl["EngBrakeData"]["CcStat_D_Actl"] in (1, 2)
 
     # BluePilot: traffic sign recognition (delegated to carstate_ext)
-    if self.CP.flags & FordFlags.CANFD:
-      ret_sp.speedLimit = CarStateExt.update_traffic_signals(self, cp_cam)
+    #if self.CP.flags & FordFlags.CANFD:
+    ret_sp.speedLimit = CarStateExt.update_traffic_signals(self, cp_cam)
 
     if not self.CP.openpilotLongitudinalControl:
       ret.accFaulted = ret.accFaulted or cp_cam.vl["ACCDATA"]["CmbbDeny_B_Actl"] == 1
@@ -250,11 +250,11 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
       ("IPMA_Data", 1),
     ]
 
-    if CP.flags & FordFlags.CANFD:
-      cam_messages += [
-        ("Traffic_RecognitnData", 1),
-        ("IPMA_Data2", 1),
-      ]
+    #if CP.flags & FordFlags.CANFD:
+    cam_messages += [
+      ("Traffic_RecognitnData", 1),
+      ("IPMA_Data2", 1),
+    ]
 
     if CP.enableBsm and CP.flags & FordFlags.CANFD:
       cam_messages += [
