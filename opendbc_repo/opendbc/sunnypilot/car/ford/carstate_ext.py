@@ -426,12 +426,12 @@ class CarStateExt:
     Returns:
       Speed limit in m/s, or 0 if not available.
     """
-    if self.CP.flags & FordFlags.CANFD:
-      v_limit = cp_cam.vl["Traffic_RecognitnData"]["TsrVLim1MsgTxt_D_Rq"]
-      v_limit_unit = cp_cam.vl["Traffic_RecognitnData"]["TsrVlUnitMsgTxt_D_Rq"]
+    #if self.CP.flags & FordFlags.CANFD:
+    v_limit = cp_cam.vl["Traffic_RecognitnData"]["TsrVLim1MsgTxt_D_Rq"]
+    v_limit_unit = cp_cam.vl["Traffic_RecognitnData"]["TsrVlUnitMsgTxt_D_Rq"]
 
-      speed_factor = CV.MPH_TO_MS if v_limit_unit == 2 else CV.KPH_TO_MS if v_limit_unit == 1 else 0
-      return v_limit * speed_factor if v_limit not in (0, 255) else 0
+    speed_factor = CV.MPH_TO_MS if v_limit_unit == 2 else CV.KPH_TO_MS if v_limit_unit == 1 else 0
+    return v_limit * speed_factor if v_limit not in (0, 255) else 0
 
     return 0
 
