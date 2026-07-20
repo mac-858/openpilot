@@ -344,8 +344,11 @@ class SpeedLimitAssist:
         # INACTIVE
         elif self.state == SpeedLimitAssistState.inactive:
           if self.speed_limit_changed:
-            self.state = SpeedLimitAssistState.preActive
-            self.pre_active_timer = int(PRE_ACTIVE_GUARD_PERIOD[self.pcm_op_long] / DT_MDL)
+            if (self.CP_SP.intelligentCruiseButtonManagementAvailable and self.speed_limit_final_last_conv >= CONFIRM_SPEED_THRESHOLD[self.is_metric]):
+              self._update_confirmed_state()
+            else:
+              self.state = SpeedLimitAssistState.preActive
+              self.pre_active_timer = int(PRE_ACTIVE_GUARD_PERIOD[self.pcm_op_long] / DT_MDL)
           elif self._update_non_pcm_long_confirmed_state():
             self.state = SpeedLimitAssistState.active
 
