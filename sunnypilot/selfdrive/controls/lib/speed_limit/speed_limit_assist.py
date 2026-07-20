@@ -355,16 +355,26 @@ class SpeedLimitAssist:
     # DISABLED
     elif self.state == SpeedLimitAssistState.disabled:
       if self.long_enabled and self.enabled:
-        # start or reset preActive timer if initially enabled or manual set speed change detected
+        # Start or reset guard timer on initial engagement or a manual set-speed change.
         if not self.long_enabled_prev or self.v_cruise_cluster_changed:
           self.long_engaged_timer = int(DISABLED_GUARD_PERIOD / DT_MDL)
 
         elif self.long_engaged_timer <= 0:
-          if self._update_non_pcm_long_confirmed_state():
+          # With ICBM, automatically apply a detected limit at/above the
+          # confirmation threshold on initial cruise engagement.
+          if (self.CP_SP.intelligentCruiseButtonManagementAvailable and
+              self._has_speed_limit and
+              self.speed_limit_final_last_conv >= CONFIRM_SPEED_THRESHOLD[self.is_metric]):
+            self._update_confirmed_state()
+
+          elif self._update_non_pcm_long_confirmed_state():
             self.state = SpeedLimitAssistState.active
+
           elif self._has_speed_limit:
+            # Limits below the confirmation threshold still require confirmation.
             self.state = SpeedLimitAssistState.preActive
             self.pre_active_timer = int(PRE_ACTIVE_GUARD_PERIOD[self.pcm_op_long] / DT_MDL)
+
           else:
             self.state = SpeedLimitAssistState.inactive
 
