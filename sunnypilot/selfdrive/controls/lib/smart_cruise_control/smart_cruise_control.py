@@ -13,6 +13,7 @@ class SmartCruiseControl:
   def __init__(self):
     self.vision = SmartCruiseControlVision()
     self.map = SmartCruiseControlMap()
+    self.v_target_smoothed = V_CRUISE_UNSET
 
   def update(self, sm: messaging.SubMaster, long_enabled: bool, long_override: bool, v_ego: float, a_ego: float, v_cruise: float) -> None:
     self.map.update(long_enabled, long_override, v_ego, a_ego, v_cruise)
