@@ -68,18 +68,19 @@ class SmartCruiseControlVision:
     self.state = VisionState.disabled
     self.current_lat_acc = 0.
     self.max_pred_lat_acc = 0.
+    self.v_target_smoothed = None
 
   def get_a_target_from_control(self) -> float:
     return self.a_target
 
   def get_v_target_from_control(self) -> float:
     if not self.is_active:
-      self.v_target_smoothed = V_CRUISE_UNSET
+      self.v_target_smoothed = None
       return V_CRUISE_UNSET
 
     raw_v_target = max(self.v_target, MIN_V) + self.a_target * _NO_OVERSHOOT_TIME_HORIZON
 
-    if self.v_target_smoothed == V_CRUISE_UNSET:
+    if self.v_target_smoothed is None:
       self.v_target_smoothed = raw_v_target
 
     elif raw_v_target < self.v_target_smoothed - _V_TARGET_DEADBAND:
