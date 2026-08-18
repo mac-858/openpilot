@@ -19,7 +19,10 @@ VisionState = custom.LongitudinalPlanSP.SmartCruiseControl.VisionState
 ACTIVE_STATES = (VisionState.entering, VisionState.turning, VisionState.leaving)
 ENABLED_STATES = (VisionState.enabled, VisionState.overriding, *ACTIVE_STATES)
 
-_ENTERING_PRED_LAT_ACC_TH = 1.3  # Predicted Lat Acc threshold to trigger entering turn state.
+_V_TARGET_DEADBAND = 0.35  # m/s, about 0.6 mph
+_V_TARGET_RISE_TIME = .7  # seconds
+
+_ENTERING_PRED_LAT_ACC_TH = 1.4  # Predicted Lat Acc threshold to trigger entering turn state.
 _ABORT_ENTERING_PRED_LAT_ACC_TH = 1.1  # Predicted Lat Acc threshold to abort entering state if speed drops.
 
 _TURNING_LAT_ACC_TH = 1.6  # Lat Acc threshold to trigger turning state.
@@ -27,7 +30,7 @@ _TURNING_LAT_ACC_TH = 1.6  # Lat Acc threshold to trigger turning state.
 _LEAVING_LAT_ACC_TH = 1.3  # Lat Acc threshold to trigger leaving turn state.
 _FINISH_LAT_ACC_TH = 1.1  # Lat Acc threshold to trigger the end of the turn cycle.
 
-_A_LAT_REG_MAX = 2.  # Maximum lateral acceleration
+_A_LAT_REG_MAX = 2.2  # Maximum lateral acceleration
 
 _NO_OVERSHOOT_TIME_HORIZON = 4.  # s. Time to use for velocity desired based on a_target when not overshooting.
 
@@ -70,10 +73,25 @@ class SmartCruiseControlVision:
     return self.a_target
 
   def get_v_target_from_control(self) -> float:
-    if self.is_active:
-      return max(self.v_target, MIN_V) + self.a_target * _NO_OVERSHOOT_TIME_HORIZON
+    if not self.is_active:
+      self.v_target_smoothed = V_CRUISE_UNSET
+      return V_CRUISE_UNSET
 
-    return V_CRUISE_UNSET
+    raw_v_target = max(self.v_target, MIN_V) + self.a_target * _NO_OVERSHOOT_TIME_HORIZON
+
+    if self.v_target_smoothed == V_CRUISE_UNSET:
+      self.v_target_smoothed = raw_v_target
+
+    elif raw_v_target < self.v_target_smoothed - _V_TARGET_DEADBAND:
+      # Apply a lower curve-speed target immediately.
+      self.v_target_smoothed = raw_v_target
+
+    elif raw_v_target > self.v_target_smoothed + _V_TARGET_DEADBAND:
+      # Recover speed gradually, avoiding repeated ICBM +/- commands.
+      rise_step = DT_MDL / _V_TARGET_RISE_TIME
+      self.v_target_smoothed = min(raw_v_target, self.v_target_smoothed + rise_step)
+
+    return self.v_target_smoothed
 
   def _update_params(self) -> None:
     if self.frame % int(PARAMS_UPDATE_PERIOD / DT_MDL) == 0:
