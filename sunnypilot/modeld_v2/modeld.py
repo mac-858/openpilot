@@ -9,8 +9,10 @@ See the LICENSE.md file in the root directory for more details.
 import os
 from openpilot.system.hardware import TICI
 os.environ['DEV'] = 'QCOM' if TICI else 'CPU'
-os.environ['GMMU'] = '0'
-import threading
+USBGPU = "USBGPU" in os.environ
+if USBGPU:
+  os.environ['DEV'] = 'AMD'
+  os.environ['AMD_IFACE'] = 'USB'
 import pickle
 import time
 import numpy as np
@@ -37,36 +39,14 @@ from openpilot.sunnypilot.modeld_v2.camera_offset_helper import CameraOffsetHelp
 
 from openpilot.sunnypilot.livedelay.helpers import get_lat_delay
 from openpilot.sunnypilot.modeld_v2.modeld_base import ModelStateBase
-from openpilot.sunnypilot.modeld_v2.compile_modeld import WARP_INPUTS, POLICY_INPUTS
-from openpilot.sunnypilot.models.helpers import get_active_bundle, chestnut_present
+from openpilot.sunnypilot.models.helpers import get_active_bundle
 
 PROCESS_NAME = "selfdrive.modeld.modeld_tinygrad"
-BIG_MODEL_TIMEOUT = 60
-
-
-def select_devices(chestnut: bool, metadata: dict) -> tuple[str, str]:
-  """(warp device, model/queue device) for a compiled pkl. The pkl is bound to the device it was
-  compiled for, so the same USB GPU probe that picked the catalog decides the model device here."""
-  dev = 'AMD' if chestnut else ('QCOM' if TICI else 'CPU')
-  return metadata.get('warp_dev', 'QCOM' if TICI else 'CPU'), dev
 
 
 def _pkl_exists(path):
   from openpilot.common.file_chunker import get_manifest_path
   return os.path.exists(path) or os.path.exists(get_manifest_path(path))
-
-
-def _load_jits(pkl_path):
-  from openpilot.common.file_chunker import open_file_chunked
-  from openpilot.selfdrive.modeld.helpers import load_oob
-
-  with open_file_chunked(pkl_path) as f:
-    # manifest v22+ artifacts are dump_oob streams: an 8-byte opcode length followed by the pickle (PROTO at byte 8).
-    # A plain pickle (older local compile_modeld.py output) has its FRAME length there instead, never PROTO.
-    head = f.peek(16)
-    if len(head) < 9:
-      raise EOFError(f"truncated model pkl {pkl_path}: only {len(head)} bytes")
-    return load_oob(f) if head[8:9] == pickle.PROTO else pickle.load(f)
 
 
 def _find_driving_pkl(bundle):
@@ -97,14 +77,14 @@ class ModelState(ModelStateBase):
   inputs: dict[str, np.ndarray]
   prev_desire: np.ndarray
 
-  def __init__(self, cam_w: int, cam_h: int, chestnut: bool = False):
+  def __init__(self, cam_w: int, cam_h: int):
     ModelStateBase.__init__(self)
 
     env_pkl = os.environ.get('COMBINED_MODEL_PKL')
     if env_pkl and os.path.exists(env_pkl):
       model_bundle = None
     else:
-      model_bundle = get_active_bundle(chestnut=chestnut)
+      model_bundle = get_active_bundle()
     self.generation = model_bundle.generation if model_bundle is not None else None
     overrides = {override.key: override.value for override in model_bundle.overrides} if model_bundle else {}
 
@@ -112,40 +92,38 @@ class ModelState(ModelStateBase):
     self.LONG_SMOOTH_SECONDS = float(overrides.get('long', ".0"))
     self.MIN_LAT_CONTROL_SPEED = 0.3
     self.PLANPLUS_CONTROL: float = 1.0
-    self.chestnut = chestnut
 
     pkl_path = _find_driving_pkl(model_bundle)
-    assert pkl_path is not None, f"No driving pkl found for {'chestnut' if chestnut else 'small model'} — all models must be compiled with compile_modeld.py"
+    assert pkl_path is not None, "No driving pkl found — all models must be compiled with compile_modeld.py"
     self._init_combined(pkl_path, cam_w, cam_h, model_bundle)
 
   def _init_combined(self, pkl_path, cam_w, cam_h, bundle):
     from tinygrad.tensor import Tensor
     from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
-    from openpilot.sunnypilot.modeld_v2.compile_modeld import derive_frame_skip, make_split_input_queues, make_supercombo_input_queues
+    from openpilot.sunnypilot.modeld_v2.compile_modeld import derive_frame_skip, make_split_input_queues
+    from tinygrad.device import Device
+
+    from openpilot.common.file_chunker import read_file_chunked
 
     cloudlog.warning(f"loading combined pkl: {pkl_path}")
-    jits = _load_jits(pkl_path)
+    jits = pickle.loads(read_file_chunked(pkl_path))
+
+    self.DEV = Device.DEFAULT
 
     metadata = jits['metadata']
-    # the catalog pkl is compiled for a fixed device; the runtime must put its inputs on the same one
-    self.WARP_DEV, self.DEV = select_devices(self.chestnut, metadata)
-    self.QUEUE_DEV = self.DEV
-    self.run_policy = jits['run_policy']
-    self.warp = jits[(cam_w, cam_h)]
-
     if 'model' in metadata:
       model_metadata = metadata['model']
       self.vision_output_slices = model_metadata['output_slices']
       self.policy_output_slices = {}
       self._policy_slices_list = []
       self._combined_model_type = 'supercombo'
-      self._vision_input_names = [key for key in model_metadata['input_shapes'] if 'img' in key]
+      self._vision_input_names = [k for k in model_metadata['input_shapes'] if 'img' in k]
+      from openpilot.sunnypilot.modeld_v2.compile_modeld import make_supercombo_input_queues
       frame_skip = derive_frame_skip({}, model_metadata['input_shapes'])
-      self.input_queues, self.numpy_inputs = make_supercombo_input_queues(model_metadata['input_shapes'],
-                                                                          frame_skip, device=self.QUEUE_DEV)
+      self.input_queues, self.numpy_inputs = make_supercombo_input_queues(model_metadata['input_shapes'], frame_skip, device=self.DEV)
     else:
       vision_metadata = metadata['vision']
-      policy_keys = [k for k in metadata if k not in ('vision', 'warp_dev')]
+      policy_keys = [k for k in metadata if k != 'vision']
       if policy_keys == ['policy']:
         self._combined_model_type = 'split'
       else:
@@ -155,16 +133,16 @@ class ModelState(ModelStateBase):
       self._policy_slices_list = [metadata[k]['output_slices'] for k in policy_keys]
       self.policy_output_slices = self._policy_slices_list[0]
       self._has_on_policy = any('on' in k.lower() for k in policy_keys)
-      self._vision_input_names = [key for key in vision_metadata['input_shapes'] if 'img' in key]
-      first_policy_meta = metadata[policy_keys[0]]
-      frame_skip = derive_frame_skip(vision_metadata['input_shapes'], first_policy_meta['input_shapes'])
-      self.input_queues, self.numpy_inputs = make_split_input_queues(vision_metadata['input_shapes'],
-                                                                     first_policy_meta['input_shapes'],
-                                                                     frame_skip, device=self.QUEUE_DEV)
+      first_policy_metadata = metadata[policy_keys[0]]
+      vision_input_shapes = vision_metadata['input_shapes']
+      policy_input_shapes = first_policy_metadata['input_shapes']
+      self._vision_input_names = [k for k in vision_input_shapes if 'img' in k]
+      frame_skip = derive_frame_skip(vision_input_shapes, policy_input_shapes)
+      self.input_queues, self.numpy_inputs = make_split_input_queues(vision_input_shapes, policy_input_shapes, frame_skip, device=self.DEV)
 
-    self._desire_key = next(key for key in self.numpy_inputs if key.startswith('desire'))
-    self._road_key = next(key for key in self._vision_input_names if 'big' not in key)
-    self._wide_key = next(key for key in self._vision_input_names if 'big' in key)
+    from openpilot.sunnypilot.modeld_v2.parse_model_outputs_split import Parser as SplitParser
+    from openpilot.sunnypilot.modeld_v2.parse_model_outputs import Parser as CombinedParser
+    self.parser = SplitParser() if self._combined_model_type != 'supercombo' else CombinedParser()
 
     is_20hz = bundle.is20hz if bundle else self._combined_model_type in ('split', 'multi_policy')
     if is_20hz:
@@ -174,36 +152,21 @@ class ModelState(ModelStateBase):
       from openpilot.sunnypilot.modeld_v2.constants import ModelConstants
       self.constants = ModelConstants()
 
-    if self._combined_model_type != 'supercombo':
-      from openpilot.sunnypilot.modeld_v2.parse_model_outputs_split import Parser as SplitParser
-      self.parser = SplitParser()
-    else:
-      from openpilot.sunnypilot.modeld_v2.parse_model_outputs import Parser as CombinedParser
-      self.parser = CombinedParser()
-
     self.prev_desire = np.zeros(self.constants.DESIRE_LEN, dtype=np.float32)
     self.full_frames: dict = {}
     self._blob_cache: dict = {}
     nv12_info = get_nv12_info(cam_w, cam_h)
     self.frame_buf_params = dict.fromkeys(self._vision_input_names, nv12_info)
 
-    yuv_size = self.frame_buf_params[self._road_key][3]
-    frame_tensor = Tensor(np.zeros(yuv_size, dtype=np.uint8), device=self.WARP_DEV).contiguous().realize()
-    big_frame_tensor = Tensor(np.zeros(yuv_size, dtype=np.uint8), device=self.WARP_DEV).contiguous().realize()
-    self.warp(**{k: self.input_queues[k] for k in WARP_INPUTS}, frame=frame_tensor, big_frame=big_frame_tensor)
+    self._run_policy = jits[(cam_w, cam_h)]['run_policy']
+    self._warp_enqueue = jits[(cam_w, cam_h)]['warp_enqueue']
+    road_name = next(k for k in self._vision_input_names if 'big' not in k)
+    yuv_size = self.frame_buf_params[road_name][3]
+    self._warp_enqueue(
+      **self.input_queues,
+      frame=Tensor(np.zeros(yuv_size, dtype=np.uint8), device=self.DEV).contiguous().realize(),
+      big_frame=Tensor(np.zeros(yuv_size, dtype=np.uint8), device=self.DEV).contiguous().realize())
 
-  def warmup(self) -> None:
-    dummy_frames = {k: np.zeros(self.frame_buf_params[k][3], dtype=np.uint8) for k in self._vision_input_names}
-    transforms = {k: np.eye(3, dtype=np.float32) for k in (self._road_key, self._wide_key)}
-
-    dummy_inputs = {k: np.zeros(v.shape, dtype=v.dtype) for k, v in self.numpy_inputs.items() if k not in ('tfm', 'big_tfm', 'prev_feat')}
-    self.run(dummy_frames, transforms, dummy_inputs, prepare_only=False)
-
-    for v in self.numpy_inputs.values():
-      v[:] = 0
-    self.prev_desire[:] = 0
-    self.full_frames.clear()
-    self._blob_cache.clear()
 
   @property
   def mlsim(self) -> bool:
@@ -215,7 +178,7 @@ class ModelState(ModelStateBase):
 
   @property
   def desire_key(self) -> str:
-    return self._desire_key
+    return next(k for k in self.numpy_inputs if k.startswith('desire'))
 
   def run(self, bufs: dict[str, VisionBuf], transforms: dict[str, np.ndarray],
                 inputs: dict[str, np.ndarray], prepare_only: bool) -> dict[str, np.ndarray] | None:
@@ -226,42 +189,36 @@ class ModelState(ModelStateBase):
       yuv_size = self.frame_buf_params[key][3]
       cache_key = (key, ptr)
       if cache_key not in self._blob_cache:
-        self._blob_cache[cache_key] = Tensor.from_blob(ptr, (yuv_size,), dtype='uint8', device=self.WARP_DEV)
+        self._blob_cache[cache_key] = Tensor.from_blob(ptr, (yuv_size,), dtype='uint8', device=self.DEV)
       self.full_frames[key] = self._blob_cache[cache_key]
 
     desire_key = self.desire_key
     inputs[desire_key][0] = 0
     self.numpy_inputs[desire_key][:] = np.where(inputs[desire_key] - self.prev_desire > .99, inputs[desire_key], 0)
     self.prev_desire[:] = inputs[desire_key]
-    for key in ('traffic_convention', 'lateral_control_params', 'action_t'):
+    for key in ('traffic_convention', 'lateral_control_params'):
       if key in self.numpy_inputs and key in inputs:
         self.numpy_inputs[key][:] = inputs[key]
 
-    road_key = self._road_key
-    wide_key = self._wide_key
+    road_key = next(n for n in bufs if 'big' not in n)
+    wide_key = next(n for n in bufs if 'big' in n)
     self.numpy_inputs['tfm'][:, :] = transforms[road_key].reshape(3, 3)
     self.numpy_inputs['big_tfm'][:, :] = transforms[wide_key].reshape(3, 3)
 
-    warped = self.warp(**{k: self.input_queues[k] for k in WARP_INPUTS}, frame=self.full_frames[road_key], big_frame=self.full_frames[wide_key])
     if prepare_only:
+      self._warp_enqueue(**self.input_queues, frame=self.full_frames[road_key], big_frame=self.full_frames[wide_key])
       return None
-    raw_outputs = self.run_policy(**{k: self.input_queues[k] for k in POLICY_INPUTS if k in self.input_queues}, warped=warped)
+
+    raw_outputs = self._run_policy(**self.input_queues, frame=self.full_frames[road_key], big_frame=self.full_frames[wide_key])
 
     if self._combined_model_type == 'supercombo':
       model_output = raw_outputs.numpy().flatten()
-      if self.chestnut and not np.all(np.isfinite(model_output)):
-        raise RuntimeError("model output not finite")
       sliced = {k: model_output[np.newaxis, v] for k, v in self.vision_output_slices.items()}
       outputs = self.parser.parse_outputs(sliced)
-      if 'prev_feat' in self.numpy_inputs:
-        self.numpy_inputs['prev_feat'][:] = model_output[self.vision_output_slices['hidden_state']]
     else:
       vision_output = raw_outputs[0].numpy().flatten()
       vision_sliced = {k: vision_output[np.newaxis, v] for k, v in self.vision_output_slices.items()}
       outputs = self.parser.parse_vision_outputs(vision_sliced)
-
-      if 'prev_feat' in self.numpy_inputs and 'hidden_state' in self.vision_output_slices:
-        self.numpy_inputs['prev_feat'][:] = vision_output[self.vision_output_slices['hidden_state']]
 
       for i, policy_slices in enumerate(self._policy_slices_list):
         policy_output = raw_outputs[i + 1].numpy().flatten()
@@ -331,28 +288,7 @@ def main(demo=False):
     cloudlog.warning(f"connected extra cam with buffer size: {vipc_client_extra.buffer_len} ({vipc_client_extra.width} x {vipc_client_extra.height})")
 
   cloudlog.warning("loading model")
-  # BluePilot: the catalog and the runtime share one USB GPU probe; a big-model load that fails
-  # or times out falls back to the small (qcom slot) model instead of crashing the daemon
-  CHESTNUT = chestnut_present()
-  model = None
-  if CHESTNUT:
-    big_model = None
-    def load_big():
-      nonlocal big_model
-      try:
-        m = ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=True)
-        m.warmup()
-        big_model = m
-      except Exception:
-        cloudlog.exception("chestnut load failed")
-    loader = threading.Thread(target=load_big, daemon=True)
-    loader.start()
-    loader.join(BIG_MODEL_TIMEOUT)
-    model = big_model
-  small_model = ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=False) if model is None or CHESTNUT else None
-  if model is None:
-    model = small_model
-  # End BluePilot
+  model = ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height)
   cloudlog.warning("models loaded, modeld starting")
 
   # messaging
@@ -472,14 +408,7 @@ def main(demo=False):
       inputs['lateral_control_params'] = np.array([v_ego, lat_delay], dtype=np.float32)
 
     mt1 = time.perf_counter()
-    try:
-      model_output = model.run(bufs, transforms, inputs, prepare_only)
-    except Exception:
-      if not model.chestnut or small_model is None:
-        raise
-      cloudlog.exception("chestnut failed, falling back to small")  # BluePilot: one-way failover, see load above
-      model = small_model
-      continue
+    model_output = model.run(bufs, transforms, inputs, prepare_only)
     mt2 = time.perf_counter()
     model_execution_time = mt2 - mt1
 

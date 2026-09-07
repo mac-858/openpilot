@@ -125,11 +125,10 @@ class SystemLayoutMici(NavScroller):
         self._params.remove("ModelRunnerTypeCache")
       except Exception:
         pass
-      for key in ("ModelManager_ActiveBundle", "ModelManager_ActiveBundleChestnut"):
-        try:
-          self._params.remove(key)
-        except Exception:
-          pass
+      try:
+        self._params.remove("ModelManager_ActiveBundle")
+      except Exception:
+        pass
       self._params.put_bool("DoReboot", True, block=False)
       from openpilot.common.swaglog import cloudlog
       cloudlog.info("BluePilot: Cleared model cache, triggered reboot")

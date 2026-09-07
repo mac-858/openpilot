@@ -150,7 +150,7 @@ ARCHETYPES = {
   'supercombo_non20hz': Archetype(
     name='supercombo_non20hz',
     metadata_structure=_make_supercombo_metadata(SUPERCOMBO_INPUT_SHAPES, SUPERCOMBO_SLICES),
-    model_stubs=[DummyModel('chunked', 'driving_test_tinygrad.pkl')],
+    model_stubs=[DummyModel('supercombo', 'driving_test_tinygrad.pkl')],
     is_20hz=False,
     expected_model_type='supercombo',
     expected_constants_class=ModelConstants,
@@ -161,22 +161,16 @@ ARCHETYPES = {
 
 
 def make_pkl_data(archetype):
-  # layout of the published catalog pkls: run_policy at top level, one warp jit per camera resolution
   return {
     'metadata': archetype.metadata_structure,
-    'run_policy': _noop_jit,
-    (CAM_W, CAM_H): _noop_jit,
+    (CAM_W, CAM_H): {'run_policy': _noop_jit, 'warp_enqueue': _noop_jit},
   }
 
 
-def write_pkl(tmp_path, archetype, oob=True):
+def write_pkl(tmp_path, archetype):
   pkl_path = tmp_path / 'driving_test_tinygrad.pkl'
   with open(pkl_path, 'wb') as f:
-    if oob:
-      from openpilot.selfdrive.modeld.helpers import dump_oob
-      dump_oob(make_pkl_data(archetype), f)
-    else:
-      pickle.dump(make_pkl_data(archetype), f)
+    pickle.dump(make_pkl_data(archetype), f)
   return pkl_path
 
 
@@ -190,8 +184,8 @@ def make_bundle(archetype):
 @pytest.fixture
 def patch_modeld(monkeypatch):
   def _patch(bundle):
-    monkeypatch.setattr(helpers, 'get_active_bundle', lambda params=None, *, chestnut=None: bundle)
-    monkeypatch.setattr(modeld_module, 'get_active_bundle', lambda params=None, *, chestnut=None: bundle)
+    monkeypatch.setattr(helpers, 'get_active_bundle', lambda params=None: bundle, raising=False)
+    monkeypatch.setattr(modeld_module, 'get_active_bundle', lambda params=None: bundle, raising=False)
 
   return _patch
 
@@ -200,8 +194,8 @@ def patch_modeld(monkeypatch):
 def model_state_factory(tmp_path, monkeypatch, patch_modeld):
   from openpilot.system.hardware import hw
 
-  def _create(archetype, oob=True):
-    write_pkl(tmp_path, archetype, oob=oob)
+  def _create(archetype):
+    write_pkl(tmp_path, archetype)
     bundle = make_bundle(archetype)
     patch_modeld(bundle)
     monkeypatch.setattr(hw.Paths, 'model_root', staticmethod(lambda: str(tmp_path)))

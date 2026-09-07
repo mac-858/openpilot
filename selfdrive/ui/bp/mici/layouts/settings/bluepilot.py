@@ -198,7 +198,7 @@ class BluePilotLayoutMici(NavScroller):
 
   def _clear_model_cache(self):
     def do_clear():
-      for key in ("ModelRunnerTypeCache", "ModelManager_ActiveBundle", "ModelManager_ActiveBundleChestnut"):
+      for key in ("ModelRunnerTypeCache", "ModelManager_ActiveBundle"):
         try:
           self._params.remove(key)
         except Exception:
