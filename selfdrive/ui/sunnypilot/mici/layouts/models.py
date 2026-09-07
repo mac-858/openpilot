@@ -9,7 +9,6 @@ import pyray as rl
 
 from cereal import custom
 from openpilot.sunnypilot.models.default_model import DEFAULT_MODEL
-from openpilot.sunnypilot.models.helpers import ACTIVE_BUNDLE_KEYS, get_active_source
 from openpilot.selfdrive.ui.mici.widgets.button import BigButton
 from openpilot.selfdrive.ui.sunnypilot.layouts.settings.models import ModelsLayout
 from openpilot.selfdrive.ui.ui_state import ui_state, device
@@ -64,7 +63,7 @@ class ModelsLayoutMici(NavScroller):
     self.select_model_btn.set_click_callback(self._show_folders)
 
     self.cancel_download_btn = BigButton(tr("cancel download"))
-    self.cancel_download_btn.set_click_callback(lambda: ui_state.params.remove("ModelManager_DownloadRef"))
+    self.cancel_download_btn.set_click_callback(lambda: ui_state.params.remove("ModelManager_DownloadIndex"))
 
     self.main_items = [self.current_model_info, self.select_model_btn, self.cancel_download_btn]
     self._scroller.add_widgets(self.main_items)
@@ -116,11 +115,11 @@ class ModelsLayoutMici(NavScroller):
     self._show_selection_view(folder_buttons, self._reset_main_view)
 
   def _select_model(self, bundle):
-    ui_state.params.put("ModelManager_DownloadRef", bundle.ref)
+    ui_state.params.put("ModelManager_DownloadIndex", bundle.index)
     self._reset_main_view()
 
   def _select_default(self):
-    ui_state.params.remove(ACTIVE_BUNDLE_KEYS[get_active_source()])
+    ui_state.params.remove("ModelManager_ActiveBundle")
     self._reset_main_view()
 
   def _select_folder(self, folder_name):
@@ -188,7 +187,7 @@ class ModelsLayoutMici(NavScroller):
       for model in manager.selectedBundle.models:
         count += 1
         p = model.artifact.downloadProgress
-        if p.status in (custom.ModelManagerSP.DownloadStatus.downloading, custom.ModelManagerSP.DownloadStatus.verifying):
+        if p.status == custom.ModelManagerSP.DownloadStatus.downloading:
           progress += p.progress
         elif p.status in (custom.ModelManagerSP.DownloadStatus.downloaded,
                           custom.ModelManagerSP.DownloadStatus.cached):
