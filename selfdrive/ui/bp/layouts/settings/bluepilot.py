@@ -1054,10 +1054,11 @@ class BluePilotLayout(Widget):
           self._params.remove("ModelRunnerTypeCache")
         except Exception:
           pass
-        try:
-          self._params.remove("ModelManager_ActiveBundle")
-        except Exception:
-          pass
+        for key in ("ModelManager_ActiveBundle", "ModelManager_ActiveBundleChestnut"):
+          try:
+            self._params.remove(key)
+          except Exception:
+            pass
         self._params.put_bool("DoReboot", True, block=False)
         cloudlog.info("BluePilot: Cleared model cache (ModelRunnerTypeCache, ModelManager_ActiveBundle), triggered reboot")
 
