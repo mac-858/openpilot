@@ -174,12 +174,10 @@ class ModelState(ModelStateBase):
       from openpilot.sunnypilot.modeld_v2.constants import ModelConstants
       self.constants = ModelConstants()
 
-    if self._combined_model_type != 'supercombo':
-      from openpilot.sunnypilot.modeld_v2.parse_model_outputs_split import Parser as SplitParser
-      self.parser = SplitParser()
-    else:
-      from openpilot.sunnypilot.modeld_v2.parse_model_outputs import Parser as CombinedParser
-      self.parser = CombinedParser()
+    # BluePilot: sunnypilot#1993 uses one shape-aware parser for every packaging type.
+    from openpilot.sunnypilot.modeld_v2.parse_model_outputs import Parser
+    self.parser = Parser()
+    # End BluePilot
 
     self.prev_desire = np.zeros(self.constants.DESIRE_LEN, dtype=np.float32)
     self.full_frames: dict = {}

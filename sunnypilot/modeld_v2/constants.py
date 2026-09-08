@@ -35,6 +35,9 @@ class ModelConstants:
   LANE_LINES_WIDTH = 2
   ROAD_EDGES_WIDTH = 2
   PLAN_WIDTH = 15
+  # BluePilot: required by the unified parser from sunnypilot#1993.
+  ACTION_WIDTH = 2
+  # End BluePilot
   DESIRE_PRED_WIDTH = 8
   LAT_PLANNER_SOLUTION_WIDTH = 4
   DESIRED_CURV_WIDTH = 1
