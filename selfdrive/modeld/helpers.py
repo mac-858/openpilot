@@ -1,4 +1,9 @@
+import io
 import json
+import pickle
+import shutil
+import struct
+import tempfile
 from pathlib import Path
 
 MODELS_DIR = Path(__file__).resolve().parent / 'models'
@@ -24,3 +29,44 @@ def usbgpu_present() -> bool:
     except Exception:
       pass
   return False
+
+
+def dump_oob(obj, f):
+  with tempfile.TemporaryFile(dir=".") as tmp:
+    def buffer_callback(pb: pickle.PickleBuffer):
+      m = pb.raw()
+      tmp.write(struct.pack('<q', m.nbytes))
+      tmp.write(m)
+      pb.release() # keep peak ram at ~1 buffer
+    stream = io.BytesIO()
+    pickle.Pickler(stream, protocol=5, buffer_callback=buffer_callback).dump(obj)
+    opcodes = stream.getvalue()
+    f.write(struct.pack('<q', len(opcodes)))
+    f.write(opcodes)
+    tmp.seek(0)
+    shutil.copyfileobj(tmp, f)
+
+def _read_exact(f, n: int, what: str) -> bytes:
+  data = f.read(n)
+  if len(data) != n:
+    raise EOFError(f"truncated OOB pickle: {what} expected {n} bytes, got {len(data)}")
+  return data
+
+def load_oob(f):
+  # every length is checked so a truncated or corrupt artifact raises instead of feeding
+  # zero-filled weights to the model
+  opcodes = _read_exact(f, struct.unpack('<q', _read_exact(f, 8, "opcode length"))[0], "opcodes")
+  def buffers():
+    while (h := f.read(8)):
+      if len(h) != 8:
+        raise EOFError(f"truncated OOB pickle: buffer header expected 8 bytes, got {len(h)}")
+      size = struct.unpack('<q', h)[0]
+      pb = pickle.PickleBuffer(bytearray(size))
+      view, got = memoryview(pb), 0
+      while got < size:
+        n = f.readinto(view[got:])
+        if not n:
+          raise EOFError(f"truncated OOB pickle: buffer expected {size} bytes, got {got}")
+        got += n
+      yield pb
+  return pickle.load(io.BytesIO(opcodes), buffers=buffers())

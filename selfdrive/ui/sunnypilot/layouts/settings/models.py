@@ -11,6 +11,7 @@ import pyray as rl
 
 from cereal import custom
 from openpilot.sunnypilot.models.default_model import DEFAULT_MODEL
+from openpilot.sunnypilot.models.helpers import ACTIVE_BUNDLE_KEYS, get_active_source
 from openpilot.common.constants import CV
 from openpilot.selfdrive.ui.ui_state import device, ui_state
 from openpilot.system.ui.lib.multilang import tr
@@ -64,6 +65,7 @@ class ModelsLayout(Widget):
 
     self.refresh_item = button_item(tr("Refresh Model List"), tr("REFRESH"), "",
                                     lambda: (ui_state.params.put("ModelManager_LastSyncTime", 0),
+                                             ui_state.params.put("ModelManager_LastSyncTime_Chestnut", 0),
                                              gui_app.push_widget(alert_dialog(tr("Fetching Latest Models")))))
 
     self.clear_cache_item = ListItemSP(
@@ -73,7 +75,7 @@ class ModelsLayout(Widget):
       callback=self._clear_cache
     )
 
-    self.cancel_download_item = button_item(tr("Cancel Download"), tr("Cancel"), "", lambda: ui_state.params.remove("ModelManager_DownloadIndex"))
+    self.cancel_download_item = button_item(tr("Cancel Download"), tr("Cancel"), "", lambda: ui_state.params.remove("ModelManager_DownloadRef"))
 
     self.lane_turn_value_control = option_item_sp(tr("Adjust Lane Turn Speed"), "LaneTurnValue", 500, 2000,
                                                   tr("Set the maximum speed for lane turn desires. Default is 19 mph."),
@@ -131,6 +133,7 @@ class ModelsLayout(Widget):
 
   def _handle_bundle_download_progress(self):
     labels = {custom.ModelManagerSP.Model.Type.supercombo: self.supercombo_label,
+              custom.ModelManagerSP.Model.Type.chunked: self.supercombo_label,
               custom.ModelManagerSP.Model.Type.vision: self.vision_label,
               custom.ModelManagerSP.Model.Type.policy: self.policy_label,
               custom.ModelManagerSP.Model.Type.offPolicy: self.off_policy_label,
@@ -152,7 +155,7 @@ class ModelsLayout(Widget):
     status_changed = self.prev_download_status != self.download_status
     self.prev_download_status = self.download_status
 
-    self.cancel_download_item.set_visible(bool(self.model_manager.selectedBundle) and ui_state.params.get("ModelManager_DownloadIndex") is not None)
+    self.cancel_download_item.set_visible(bool(self.model_manager.selectedBundle) and ui_state.params.get("ModelManager_DownloadRef") is not None)
 
     if (current_time := time.monotonic()) - self.last_cache_calc_time > 0.5:
       self.last_cache_calc_time = current_time
@@ -168,6 +171,8 @@ class ModelsLayout(Widget):
         text, show, color = f"pending - {bundle.displayName}", False, rl.GRAY
         if p.status == custom.ModelManagerSP.DownloadStatus.downloading:
           text, show = f"{int(p.progress)}% - {bundle.displayName}", True
+        elif p.status == custom.ModelManagerSP.DownloadStatus.verifying:
+          text, show = f"{tr('verifying')} {int(p.progress)}% - {bundle.displayName}", True
         elif p.status in (custom.ModelManagerSP.DownloadStatus.downloaded, custom.ModelManagerSP.DownloadStatus.cached):
           status_text = tr("from cache" if p.status == custom.ModelManagerSP.DownloadStatus.cached else "downloaded")
           text, color = f"{bundle.displayName} - {status_text if status_changed else tr('ready')}", ON_COLOR
@@ -190,10 +195,10 @@ class ModelsLayout(Widget):
       return
     selected_ref = self.model_dialog.selection_ref
     if selected_ref == "Default":
-      ui_state.params.remove("ModelManager_ActiveBundle")
+      ui_state.params.remove(ACTIVE_BUNDLE_KEYS[get_active_source()])
       self._show_reset_params_dialog()
     elif selected_bundle := next((bundle for bundle in self.model_manager.availableBundles if bundle.ref == selected_ref), None):
-      ui_state.params.put("ModelManager_DownloadIndex", selected_bundle.index)
+      ui_state.params.put("ModelManager_DownloadRef", selected_bundle.ref)
       if self.model_manager.activeBundle and selected_bundle.generation != self.model_manager.activeBundle.generation:
         self._show_reset_params_dialog()
     self.model_dialog = None
