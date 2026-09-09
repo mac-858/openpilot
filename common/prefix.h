@@ -24,17 +24,19 @@ public:
   }
 
   ~OpenpilotPrefix() {
+    // BluePilot: options precede operands for BSD/macOS rm (commaai/openpilot #38728).
     auto param_path = Params().getParamPath();
     if (util::file_exists(param_path)) {
       std::string real_path = util::readlink(param_path);
-      util::check_system(util::string_format("rm %s -rf", real_path.c_str()));
+      util::check_system(util::string_format("rm -rf %s", real_path.c_str()));
       unlink(param_path.c_str());
     }
     if (getenv("COMMA_CACHE") == nullptr) {
-      util::check_system(util::string_format("rm %s -rf", Path::download_cache_root().c_str()));
+      util::check_system(util::string_format("rm -rf %s", Path::download_cache_root().c_str()));
     }
-    util::check_system(util::string_format("rm %s -rf", Path::comma_home().c_str()));
-    util::check_system(util::string_format("rm %s -rf", msgq_path.c_str()));
+    util::check_system(util::string_format("rm -rf %s", Path::comma_home().c_str()));
+    util::check_system(util::string_format("rm -rf %s", msgq_path.c_str()));
+    // End BluePilot
     unsetenv("OPENPILOT_PREFIX");
   }
 

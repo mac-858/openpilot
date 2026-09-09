@@ -1,6 +1,12 @@
 #include "tools/replay/py_downloader.h"
 
 #include <csignal>
+// BluePilot: capture downloader progress from stderr (commaai/openpilot #38734).
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <thread>
+// End BluePilot
 #include <fcntl.h>
 #include <mutex>
 #include <sys/wait.h>
@@ -14,7 +20,16 @@ namespace {
 static std::mutex handler_mutex;
 static DownloadProgressHandler progress_handler = nullptr;
 
-// Run a Python command and capture stdout. Stderr is left attached to the parent.
+// BluePilot: progress is separate from the downloader's stdout result.
+void reportProgress(const char *line) {
+  unsigned long long cur = 0, total = 0;
+  if (sscanf(line, "PROGRESS:%llu:%llu", &cur, &total) != 2) return;
+  std::lock_guard<std::mutex> lk(handler_mutex);
+  if (progress_handler && total > 0 && cur <= total) progress_handler(cur, total, true);
+}
+// End BluePilot
+
+// Run a Python command and capture stdout. Stderr is scanned for progress and otherwise passed through.
 // Returns stdout content. If abort is signaled, kills the child process.
 std::string runPython(const std::vector<std::string> &args, std::atomic<bool> *abort = nullptr) {
   // Build argv for execvp
@@ -27,16 +42,27 @@ std::string runPython(const std::vector<std::string> &args, std::atomic<bool> *a
   }
   argv.push_back(nullptr);
 
-  int stdout_pipe[2];
+  int stdout_pipe[2], stderr_pipe[2];
   if (pipe(stdout_pipe) != 0) {
     rWarning("py_downloader: pipe() failed");
     return {};
   }
 
+  // BluePilot: drain stderr concurrently so neither output pipe blocks the downloader.
+  if (pipe(stderr_pipe) != 0) {
+    rWarning("py_downloader: pipe() failed");
+    close(stdout_pipe[0]); close(stdout_pipe[1]);
+    return {};
+  }
+  // End BluePilot
+
   pid_t pid = fork();
   if (pid < 0) {
     rWarning("py_downloader: fork() failed");
     close(stdout_pipe[0]); close(stdout_pipe[1]);
+    // BluePilot: release both pipes on fork failure.
+    close(stderr_pipe[0]); close(stderr_pipe[1]);
+    // End BluePilot
     return {};
   }
 
@@ -58,12 +84,40 @@ std::string runPython(const std::vector<std::string> &args, std::atomic<bool> *a
     dup2(stdout_pipe[1], STDOUT_FILENO);
     close(stdout_pipe[1]);
 
+    // BluePilot: redirect stderr to the progress reader.
+    close(stderr_pipe[0]);
+    dup2(stderr_pipe[1], STDERR_FILENO);
+    close(stderr_pipe[1]);
+    // End BluePilot
+
     execvp("python3", const_cast<char *const *>(argv.data()));
     _exit(127);
   }
 
   // Parent process
   close(stdout_pipe[1]);
+
+  // BluePilot: preserve ordinary diagnostic output while reporting download progress.
+  close(stderr_pipe[1]);
+  std::thread stderr_thread([fd = stderr_pipe[0]]() {
+    FILE *f = fdopen(fd, "r");
+    if (!f) {
+      close(fd);
+      return;
+    }
+    char *line = nullptr;
+    size_t cap = 0;
+    while (getline(&line, &cap, f) > 0) {
+      if (strncmp(line, "PROGRESS:", 9) == 0) {
+        reportProgress(line);
+      } else {
+        fputs(line, stderr);
+      }
+    }
+    free(line);
+    fclose(f);
+  });
+  // End BluePilot
 
   std::string stdout_data;
   char buf[4096];
@@ -102,6 +156,10 @@ std::string runPython(const std::vector<std::string> &args, std::atomic<bool> *a
     stdout_data.append(buf, n);
   }
   close(stdout_pipe[0]);
+
+  // BluePilot: finish progress callbacks before returning or publishing failure.
+  stderr_thread.join();
+  // End BluePilot
 
   int status;
   waitpid(pid, &status, 0);

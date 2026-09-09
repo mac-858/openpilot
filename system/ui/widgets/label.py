@@ -605,7 +605,9 @@ class UnifiedLabel(Widget):
             self._scroll_pause_t = None
 
         elif self._scroll_state == ScrollState.SCROLLING:
-          self._scroll_offset -= 0.8 / 60. * gui_app.target_fps
+          # BluePilot: adapt sunnypilot #1967 at the shared source, retaining the stock 48 px/s speed.
+          self._scroll_offset -= 0.8 * 60. / gui_app.target_fps
+          # End BluePilot
           # don't fully hide
           if self._scroll_offset <= -size.x - self._rect.width / 3:
             self._scroll_offset = 0
