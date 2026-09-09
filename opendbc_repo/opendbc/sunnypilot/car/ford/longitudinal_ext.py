@@ -56,13 +56,13 @@ class LongitudinalExt:
 
     # Thresholds
     self.MAX_URBAN_SPEED_MPH = 45.0
-    self.following_accel_ROC = 0.002  # max accel change per scan in following mode
+    self.following_accel_ROC = 0.005  # max accel change per scan in following mode
 
     # Brake hysteresis thresholds
-    self.brake_actuate_target = -0.14   # engage brakes below this accel
-    self.brake_actuate_release = -0.06  # release brakes above this accel
-    self.precharge_actuate_target = -0.12
-    self.precharge_actuate_release = -0.06
+    self.brake_actuate_target = -0.10   # engage brakes below this accel
+    self.brake_actuate_release = -0.04  # release brakes above this accel
+    self.precharge_actuate_target = -0.08
+    self.precharge_actuate_release = -0.04
     self.op_brake_actuate_last = False
 
     # Toggles (updated from Params each frame)
@@ -201,8 +201,8 @@ class LongitudinalExt:
       bp_accel = clip(op_accel, min_follow_accel, max_follow_accel)
 
       # Rate limit downward accel changes (dampen initial brake hit)
-      # Skip rate limit if imminent collision risk
-      if ttc_sec > 8.0 and lead_time_sec > 0.5:
+      # Activates for normal approach scenarios; bypass for emergency collision risk
+      if ttc_sec > 2.0 and lead_time_sec > 0.2:
         bp_accel = clip(bp_accel, self.bp_accel_last - self.following_accel_ROC, 999)
 
       # BP brake/precharge hysteresis

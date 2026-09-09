@@ -35,8 +35,8 @@ class CarControllerParams:
   CURVATURE_ERROR = 0.002  # ~6 degrees at 10 m/s, ~10 degrees at 35 m/s
 
   ACCEL_MAX = 2.0               # m/s^2 max acceleration
-  ACCEL_MIN = -1.8 #-3.5              # m/s^2 max deceleration
-  MIN_GAS = -1.2 #-0.5
+  ACCEL_MIN = -2.0              # m/s^2 max deceleration
+  MIN_GAS = -0.5
   INACTIVE_GAS = -5.0
 
   def __init__(self, CP):
@@ -246,9 +246,9 @@ class CAR(Platforms):
 # 4 = Software version
 FW_ALPHABET = b'A-HJ-NP-VX-Z'
 FW_PATTERN = re.compile(b'^(?P<model_year_hint>[' + FW_ALPHABET + b'])' +
-                        b'(?P<platform_hint>[0-9' + FW_ALPHABET + b']{3})-' +
-                        b'(?P<part_number>[0-9' + FW_ALPHABET + b']{5,6})-' +
-                        b'(?P<software_revision>[' + FW_ALPHABET + b']{2,})\x00*$')
+                         b'(?P<platform_hint>[0-9' + FW_ALPHABET + b']{3})-' +
+                         b'(?P<part_number>[0-9' + FW_ALPHABET + b']{5,6})-' +
+                         b'(?P<software_revision>[' + FW_ALPHABET + b']{2,})\x00*$')
 
 
 def get_platform_codes(fw_versions: list[bytes] | set[bytes]) -> set[tuple[bytes, bytes]]:
