@@ -35,7 +35,7 @@ class CarControllerParams:
   CURVATURE_ERROR = 0.002  # ~6 degrees at 10 m/s, ~10 degrees at 35 m/s
 
   ACCEL_MAX = 2.0               # m/s^2 max acceleration
-  ACCEL_MIN = -2.0              # m/s^2 max deceleration
+  ACCEL_MIN = -3.5              # m/s^2 max deceleration
   MIN_GAS = -0.5
   INACTIVE_GAS = -5.0
 
