@@ -209,8 +209,8 @@ class LongitudinalExt:
       bp_accel = clip(op_accel, min_follow_accel, max_follow_accel)
 
       # Rate limit downward accel changes (dampen initial brake hit)
-      # Activates for normal approach scenarios; bypass for emergency collision risk
-      if ttc_sec > 2.0 and lead_time_sec > 0.2:
+      # Skip rate limit if imminent collision risk
+      if ttc_sec > 8.0 and lead_time_sec > 0.5:
         bp_accel = clip(bp_accel, self.bp_accel_last - self.following_accel_ROC, 999)
 
       # BP brake/precharge hysteresis
