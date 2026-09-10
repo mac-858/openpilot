@@ -12,6 +12,7 @@ Key features:
   - Rate-limited accel changes to avoid stomping the brakes
   - TTC-based emergency bypass for imminent collision scenarios
   - Mutual exclusion: brake_actuate forces gas to INACTIVE_GAS
+  - Regen braking compensation: predicts regen effects to smooth initial brake engagement
 """
 
 from collections import namedtuple
@@ -64,6 +65,9 @@ class LongitudinalExt:
     self.precharge_actuate_target = -0.08
     self.precharge_actuate_release = -0.04
     self.op_brake_actuate_last = False
+
+    # Regen compensation
+    self.regen_margin = 0.05  # ~10% of Ford's -0.5 m/s² regen; tune as needed
 
     # Toggles (updated from Params each frame)
     self.disable_BP_long_UI = False
@@ -207,6 +211,11 @@ class LongitudinalExt:
       # Apply BP gas and accel targets
       bp_gas = clip(op_gas, min_follow_gas, max_follow_gas)
       bp_accel = clip(op_accel, min_follow_accel, max_follow_accel)
+
+      # Regen braking compensation: predict regen effects in pacing/gaining to smooth
+      # initial brake engagement. Feeds into rate limiter for gradual ramping.
+      if (pacing or gaining) and lead is not None:
+        bp_accel = bp_accel - self.regen_margin
 
       # Rate limit downward accel changes (dampen initial brake hit)
       # Skip rate limit if imminent collision risk
