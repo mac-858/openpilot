@@ -185,10 +185,18 @@ class LongitudinalExt:
         min_follow_accel = op_accel
 
       if trailing:
-        max_follow_gas = op_gas
-        min_follow_gas = op_gas
-        max_follow_accel = op_accel
-        min_follow_accel = op_accel
+        # Boost acceleration only at standstill/low speed when lead accelerates away
+        if v_ego_mph < 10:  # Only boost below 10 mph
+          max_follow_gas = min(1.5, op_gas + 0.5)
+          min_follow_gas = op_gas
+          max_follow_accel = min(1.8, op_accel + 0.3)
+          min_follow_accel = op_accel
+        else:
+          # Normal trailing behavior at highway speeds
+          max_follow_gas = op_gas
+          min_follow_gas = op_gas
+          max_follow_accel = op_accel
+          min_follow_accel = op_accel
 
       if lead is None:
         max_follow_gas = op_gas
