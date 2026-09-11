@@ -12,7 +12,7 @@ Key features:
   - Rate-limited accel changes to avoid stomping the brakes
   - TTC-based emergency bypass for imminent collision scenarios
   - Mutual exclusion: brake_actuate forces gas to INACTIVE_GAS
-  - Regen braking compensation: predicts regen effects to smooth initial brake engagement
+  - Regen braking compensation: predicts regen effects to smooth initial brake engagement (all speeds)
 """
 
 from collections import namedtuple
@@ -117,49 +117,55 @@ class LongitudinalExt:
     if bpSpeedTooSlow:
       self.bpSpeedAllow = False
 
-    # BP longitudinal follow control
-    if not self.disable_BP_long_UI:
-      # Read lead vehicle data from radarState (SubMaster is on self via mixin)
-      v_ego = max(CS.out.vEgo, 0.5)
-      lead_time_sec = 999.0
-      lead = None
-      v_rel = 0.0
-      v_lead = 0.0
+    # Read lead vehicle data from radarState (SubMaster is on self via mixin)
+    v_ego = max(CS.out.vEgo, 0.5)
+    lead_time_sec = 999.0
+    lead = None
+    v_rel = 0.0
+    v_lead = 0.0
 
-      if self.sm.valid.get('radarState', False):
-        rs = self.sm['radarState']
-        lead = getattr(rs, 'leadOne', None)
-        if lead is not None and getattr(lead, 'status', 0) != 1:
-          lead = None
-        if lead:
-          d_rel = float(getattr(lead, 'dRel', 0))
-          v_rel = float(getattr(lead, 'vRel', 0))
-          v_lead = float(getattr(lead, 'vLead', 0))
-          if d_rel > 0:
-            lead_time_sec = d_rel / v_ego
-
-      lead_time_sec = float(np.clip(lead_time_sec, 0.0, 999.0))
-      v_lead_mph = v_lead * 2.23694
-
-      # Time to collision
-      ttc_sec = 120.0
+    if self.sm.valid.get('radarState', False):
+      rs = self.sm['radarState']
+      lead = getattr(rs, 'leadOne', None)
+      if lead is not None and getattr(lead, 'status', 0) != 1:
+        lead = None
       if lead:
         d_rel = float(getattr(lead, 'dRel', 0))
         v_rel = float(getattr(lead, 'vRel', 0))
-        if d_rel > 0 and v_rel < 0:
-          ttc_sec = d_rel / (-v_rel)
-        else:
-          ttc_sec = 60.0
-      ttc_sec = float(np.clip(ttc_sec, 0.2, 120.0))
+        v_lead = float(getattr(lead, 'vLead', 0))
+        if d_rel > 0:
+          lead_time_sec = d_rel / v_ego
 
+    lead_time_sec = float(np.clip(lead_time_sec, 0.0, 999.0))
+    v_lead_mph = v_lead * 2.23694
+
+    # Time to collision
+    ttc_sec = 120.0
+    if lead:
+      d_rel = float(getattr(lead, 'dRel', 0))
+      v_rel = float(getattr(lead, 'vRel', 0))
+      if d_rel > 0 and v_rel < 0:
+        ttc_sec = d_rel / (-v_rel)
+      else:
+        ttc_sec = 60.0
+    ttc_sec = float(np.clip(ttc_sec, 0.2, 120.0))
+
+    # Regen braking compensation: apply at all speeds when lead exists
+    # This smooths brake engagement across all speed ranges
+    accel_with_regen = op_accel
+    if lead is not None:
+      accel_with_regen = op_accel - self.regen_margin
+
+    # BP longitudinal follow control
+    if not self.disable_BP_long_UI:
       # Classify lead state: gaining, pacing, or trailing
       gaining = False
       pacing = False
       trailing = False
       max_follow_gas = op_gas
       min_follow_gas = op_gas
-      max_follow_accel = op_accel
-      min_follow_accel = op_accel
+      max_follow_accel = accel_with_regen
+      min_follow_accel = accel_with_regen
       bp_brake_actuate = False
       bp_precharge_actuate = False
 
@@ -179,28 +185,28 @@ class LongitudinalExt:
         else:
           max_follow_gas = op_gas
           min_follow_gas = op_gas
-        max_follow_accel = op_accel
-        min_follow_accel = op_accel
+        max_follow_accel = accel_with_regen
+        min_follow_accel = accel_with_regen
 
       if pacing:
         max_follow_gas = 0.2 + accel_due_to_pitch  # cap gas when pacing
         min_follow_gas = 0.0
-        max_follow_accel = op_accel
-        min_follow_accel = op_accel
+        max_follow_accel = accel_with_regen
+        min_follow_accel = accel_with_regen
 
       if trailing:
         # Boost acceleration only at standstill/low speed when lead accelerates away
         if v_ego_mph < 10:  # Only boost below 10 mph
           max_follow_gas = min(1.5, op_gas + 0.5)
           min_follow_gas = op_gas
-          max_follow_accel = min(1.8, op_accel + 0.3)
-          min_follow_accel = op_accel
+          max_follow_accel = min(1.8, accel_with_regen + 0.3)
+          min_follow_accel = accel_with_regen
         else:
           # Normal trailing behavior at highway speeds
           max_follow_gas = op_gas
           min_follow_gas = op_gas
-          max_follow_accel = op_accel
-          min_follow_accel = op_accel
+          max_follow_accel = accel_with_regen
+          min_follow_accel = accel_with_regen
 
       if lead is None:
         max_follow_gas = op_gas
@@ -210,12 +216,7 @@ class LongitudinalExt:
 
       # Apply BP gas and accel targets
       bp_gas = clip(op_gas, min_follow_gas, max_follow_gas)
-      bp_accel = clip(op_accel, min_follow_accel, max_follow_accel)
-
-      # Regen braking compensation: predict regen effects in pacing/gaining to smooth
-      # initial brake engagement. Feeds into rate limiter for gradual ramping.
-      if (pacing or gaining) and lead is not None:
-        bp_accel = bp_accel - self.regen_margin
+      bp_accel = clip(accel_with_regen, min_follow_accel, max_follow_accel)
 
       # Rate limit downward accel changes (dampen initial brake hit)
       # Skip rate limit if imminent collision risk
