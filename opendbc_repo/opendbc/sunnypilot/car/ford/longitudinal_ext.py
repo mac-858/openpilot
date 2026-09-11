@@ -12,7 +12,7 @@ Key features:
   - Rate-limited accel changes to avoid stomping the brakes
   - TTC-based emergency bypass for imminent collision scenarios
   - Mutual exclusion: brake_actuate forces gas to INACTIVE_GAS
-  - Regen braking compensation: applies at all speeds when lead exists (independent of BP long)
+  - Regen braking compensation: applies at all speeds when lead exists and cruise is active
 """
 
 from collections import namedtuple
@@ -150,16 +150,16 @@ class LongitudinalExt:
         ttc_sec = 60.0
     ttc_sec = float(np.clip(ttc_sec, 0.2, 120.0))
 
-    # INDEPENDENT regen braking compensation: apply at all speeds when lead exists
-    # This is completely separate from BP long control, so it always applies when following
+    # Regen braking compensation: apply when cruise is active and lead exists
+    # Only apply when CC.longActive to avoid sending invalid commands before cruise engages
     accel = op_accel
     gas = op_gas
     brake_actuate = op_brake_actuate
     precharge_actuate = op_brake_actuate
     bp_long_used = False
 
-    if lead is not None:
-      # Apply regen compensation to all accel decisions
+    if lead is not None and CC.longActive:
+      # Apply regen compensation to accel when actively controlling
       accel = op_accel - self.regen_margin
 
     # BP longitudinal follow control (only above speed threshold)
@@ -252,8 +252,8 @@ class LongitudinalExt:
         brake_actuate = bp_brake_actuate
         precharge_actuate = bp_precharge_actuate
       else:
-        # Use regen-compensated accel even when BP long is not active
-        accel = accel  # already has regen compensation from above
+        # Use stock op_accel (may have regen compensation if CC.longActive and lead exists)
+        accel = accel
         gas = op_gas
         brake_actuate = op_brake_actuate
         precharge_actuate = op_brake_actuate
