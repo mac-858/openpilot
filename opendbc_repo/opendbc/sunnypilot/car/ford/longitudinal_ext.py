@@ -12,7 +12,7 @@ Key features:
   - Rate-limited accel changes to avoid stomping the brakes
   - TTC-based emergency bypass for imminent collision scenarios
   - Mutual exclusion: brake_actuate forces gas to INACTIVE_GAS
-  - Regen braking compensation: predicts regen effects to smooth initial brake engagement (all speeds)
+  - Regen braking compensation: applies at all speeds when lead exists (independent of BP long)
 """
 
 from collections import namedtuple
@@ -150,13 +150,19 @@ class LongitudinalExt:
         ttc_sec = 60.0
     ttc_sec = float(np.clip(ttc_sec, 0.2, 120.0))
 
-    # Regen braking compensation: apply at all speeds when lead exists
-    # This smooths brake engagement across all speed ranges
-    accel_with_regen = op_accel
-    if lead is not None:
-      accel_with_regen = op_accel - self.regen_margin
+    # INDEPENDENT regen braking compensation: apply at all speeds when lead exists
+    # This is completely separate from BP long control, so it always applies when following
+    accel = op_accel
+    gas = op_gas
+    brake_actuate = op_brake_actuate
+    precharge_actuate = op_brake_actuate
+    bp_long_used = False
 
-    # BP longitudinal follow control
+    if lead is not None:
+      # Apply regen compensation to all accel decisions
+      accel = op_accel - self.regen_margin
+
+    # BP longitudinal follow control (only above speed threshold)
     if not self.disable_BP_long_UI:
       # Classify lead state: gaining, pacing, or trailing
       gaining = False
@@ -164,8 +170,8 @@ class LongitudinalExt:
       trailing = False
       max_follow_gas = op_gas
       min_follow_gas = op_gas
-      max_follow_accel = accel_with_regen
-      min_follow_accel = accel_with_regen
+      max_follow_accel = op_accel
+      min_follow_accel = op_accel
       bp_brake_actuate = False
       bp_precharge_actuate = False
 
@@ -185,28 +191,28 @@ class LongitudinalExt:
         else:
           max_follow_gas = op_gas
           min_follow_gas = op_gas
-        max_follow_accel = accel_with_regen
-        min_follow_accel = accel_with_regen
+        max_follow_accel = op_accel
+        min_follow_accel = op_accel
 
       if pacing:
         max_follow_gas = 0.2 + accel_due_to_pitch  # cap gas when pacing
         min_follow_gas = 0.0
-        max_follow_accel = accel_with_regen
-        min_follow_accel = accel_with_regen
+        max_follow_accel = op_accel
+        min_follow_accel = op_accel
 
       if trailing:
         # Boost acceleration only at standstill/low speed when lead accelerates away
         if v_ego_mph < 10:  # Only boost below 10 mph
           max_follow_gas = min(1.5, op_gas + 0.5)
           min_follow_gas = op_gas
-          max_follow_accel = min(1.8, accel_with_regen + 0.3)
-          min_follow_accel = accel_with_regen
+          max_follow_accel = min(1.8, op_accel + 0.3)
+          min_follow_accel = op_accel
         else:
           # Normal trailing behavior at highway speeds
           max_follow_gas = op_gas
           min_follow_gas = op_gas
-          max_follow_accel = accel_with_regen
-          min_follow_accel = accel_with_regen
+          max_follow_accel = op_accel
+          min_follow_accel = op_accel
 
       if lead is None:
         max_follow_gas = op_gas
@@ -216,7 +222,7 @@ class LongitudinalExt:
 
       # Apply BP gas and accel targets
       bp_gas = clip(op_gas, min_follow_gas, max_follow_gas)
-      bp_accel = clip(accel_with_regen, min_follow_accel, max_follow_accel)
+      bp_accel = clip(op_accel, min_follow_accel, max_follow_accel)
 
       # Rate limit downward accel changes (dampen initial brake hit)
       # Skip rate limit if imminent collision risk
@@ -246,7 +252,8 @@ class LongitudinalExt:
         brake_actuate = bp_brake_actuate
         precharge_actuate = bp_precharge_actuate
       else:
-        accel = op_accel
+        # Use regen-compensated accel even when BP long is not active
+        accel = accel  # already has regen compensation from above
         gas = op_gas
         brake_actuate = op_brake_actuate
         precharge_actuate = op_brake_actuate
@@ -254,13 +261,6 @@ class LongitudinalExt:
       self.bp_gas_last = bp_gas
       self.bp_accel_last = bp_accel
       bp_long_used = apply_bp_long
-    else:
-      # BP long disabled — pass through stock values
-      accel = op_accel
-      gas = op_gas
-      brake_actuate = op_brake_actuate
-      precharge_actuate = op_brake_actuate
-      bp_long_used = False
 
     # Mutual exclusion: no brake and gas at the same time
     if brake_actuate:
